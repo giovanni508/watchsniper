@@ -3,7 +3,8 @@
 from app.database import get_session
 from app.models import ConditionEnum
 from app.repositories import ListingRepository, ReferenceRepository
-from app.scraper.dummy import CATALOG, DummyWatchScraper, persist_scraped_listings
+from app.scraper.dummy import CATALOG, DummyWatchScraper
+from app.scraper.persistence import persist_scraped_listings
 
 
 async def test_scrape_returns_valid_listings() -> None:
