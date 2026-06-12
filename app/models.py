@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -120,3 +121,20 @@ class UserFilter(Base):
             f"<UserFilter user={self.user_id} max_price={self.max_price} "
             f"min_margin={self.min_margin_percentage}% brand={self.target_brand}>"
         )
+
+
+class SentAlert(Base):
+    """Deduplicazione persistente delle notifiche: un alert per coppia utente/annuncio."""
+
+    __tablename__ = "sent_alerts"
+    __table_args__ = (UniqueConstraint("user_id", "listing_id", name="uq_sent_alert"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), index=True
+    )
+    sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    def __repr__(self) -> str:
+        return f"<SentAlert user={self.user_id} listing={self.listing_id}>"
