@@ -10,13 +10,19 @@ import logging
 from app.analyzer.engine import run_analysis
 from app.config import get_settings
 from app.scraper.base import BaseScraper
-from app.scraper.dummy import DummyWatchScraper
+from app.scraper.chrono24 import Chrono24Scraper
+from app.scraper.dummy import DummyWatchScraper  # noqa: F401 — fonte demo, vedi SCRAPERS
 from app.scraper.persistence import persist_scraped_listings
 
 logger = logging.getLogger(__name__)
 
-# Registro delle fonti attive.
-SCRAPERS: tuple[type[BaseScraper], ...] = (DummyWatchScraper,)
+# Registro delle fonti attive. Per aggiungere una fonte: sottoclasse di
+# BaseScraper + voce qui sotto.
+# DummyWatchScraper è temporaneamente disattivato per testare lo scraper reale.
+SCRAPERS: tuple[type[BaseScraper], ...] = (
+    Chrono24Scraper,
+    # DummyWatchScraper,
+)
 
 
 async def scrape_cycle() -> None:

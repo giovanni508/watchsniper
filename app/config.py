@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     scraper_min_delay: float = 2.0
     scraper_max_delay: float = 7.0
     scraper_headless: bool = True
+    # Default False: ignorare gli errori TLS è insicuro. Abilitare solo dietro
+    # un proxy MITM fidato (es. proxy aziendale o ambiente sandbox).
+    scraper_ignore_https_errors: bool = False
 
     # Analyzer
     estimated_fixed_costs: float = 300.0
