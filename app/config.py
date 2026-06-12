@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     # Default False: ignorare gli errori TLS è insicuro. Abilitare solo dietro
     # un proxy MITM fidato (es. proxy aziendale o ambiente sandbox).
     scraper_ignore_https_errors: bool = False
+    # Resilienza: tentativi e backoff su fetch falliti, e numero massimo di
+    # pagine di risultati da seguire per ogni referenza.
+    scraper_max_retries: int = 3
+    scraper_retry_base_delay: float = 2.0
+    scraper_max_pages: int = 1
 
     # Analyzer
     estimated_fixed_costs: float = 300.0

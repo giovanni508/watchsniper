@@ -9,6 +9,7 @@ import asyncio
 import logging
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from types import TracebackType
 from typing import Self
 
@@ -115,15 +116,48 @@ class BaseScraper(ABC):
         logger.debug("[%s] Attesa anti-bot di %.1fs", self.name, delay)
         await asyncio.sleep(delay)
 
+    async def _with_retry[T](self, operation: Callable[[], Awaitable[T]], *, what: str) -> T:
+        """Esegue `operation` riprovando con backoff esponenziale sui fallimenti.
+
+        Tra un tentativo e l'altro ruota l'identità (UA/viewport) per ridurre il
+        rischio di ban. Rilancia l'ultima eccezione se esauriti i tentativi.
+        """
+        attempts = max(1, self._settings.scraper_max_retries)
+        last_exc: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return await operation()
+            except Exception as exc:
+                last_exc = exc
+                if attempt < attempts:
+                    backoff = self._settings.scraper_retry_base_delay * (2 ** (attempt - 1))
+                    logger.warning(
+                        "[%s] %s: tentativo %d/%d fallito (%s), retry tra %.1fs",
+                        self.name,
+                        what,
+                        attempt,
+                        attempts,
+                        exc,
+                        backoff,
+                    )
+                    await asyncio.sleep(backoff)
+                    await self.rotate_identity()
+        assert last_exc is not None  # garantito: il loop esegue almeno un tentativo
+        raise last_exc
+
     async def fetch_html(self, url: str, *, wait_until: str = "domcontentloaded") -> str:
-        """Naviga a `url` con una pagina temporanea e restituisce l'HTML renderizzato."""
-        page = await self.new_page()
-        try:
-            await page.goto(url, wait_until=wait_until)  # type: ignore[arg-type]
-            await self.random_delay()
-            return await page.content()
-        finally:
-            await page.close()
+        """Naviga a `url` (con retry/backoff) e restituisce l'HTML renderizzato."""
+
+        async def _goto() -> str:
+            page = await self.new_page()
+            try:
+                await page.goto(url, wait_until=wait_until)  # type: ignore[arg-type]
+                await self.random_delay()
+                return await page.content()
+            finally:
+                await page.close()
+
+        return await self._with_retry(_goto, what=f"fetch {url}")
 
     @abstractmethod
     async def scrape(self) -> list[ScrapedListing]:
