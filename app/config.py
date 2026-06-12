@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     scraper_max_retries: int = 3
     scraper_retry_base_delay: float = 2.0
     scraper_max_pages: int = 1
+    # Fonti attive, separate da virgola (es. "dummy", "chrono24", "dummy,chrono24").
+    # Default "dummy": demo locale senza rete né browser. Vedi app/scraper/scheduler.py.
+    scraper_sources: str = "dummy"
 
     # Analyzer
     estimated_fixed_costs: float = 300.0
@@ -46,6 +49,16 @@ class Settings(BaseSettings):
     @property
     def telegram_enabled(self) -> bool:
         return bool(self.telegram_bot_token)
+
+    @property
+    def scraper_source_list(self) -> list[str]:
+        """Nomi delle fonti attive, normalizzati (minuscolo, senza spazi/duplicati)."""
+        seen: list[str] = []
+        for raw in self.scraper_sources.split(","):
+            name = raw.strip().lower()
+            if name and name not in seen:
+                seen.append(name)
+        return seen
 
 
 @lru_cache

@@ -53,6 +53,20 @@ uv run python main.py
 Senza `TELEGRAM_BOT_TOKEN` il bot viene disabilitato (warning nel log) e i deal
 restano visibili su dashboard/API.
 
+## Fonti di scraping
+
+La/le fonte/i attive si scelgono via `SCRAPER_SOURCES` in `.env` (lista separata
+da virgola):
+
+| Valore | Descrizione |
+|---|---|
+| `dummy` (default) | Marketplace fittizio: popola la dashboard subito, **senza rete né browser**. Ideale per la demo locale. |
+| `chrono24` | Scraper reale di Chrono24: richiede `uv run playwright install chromium` e accesso di rete (no proxy MITM). |
+| `dummy,chrono24` | Entrambe le fonti a ogni ciclo. |
+
+Per aggiungere una fonte: crea una sottoclasse di `BaseScraper` e registrala in
+`SCRAPER_REGISTRY` (`app/scraper/scheduler.py`).
+
 ## Migrazioni
 
 In sviluppo le tabelle sono create automaticamente all'avvio. Per ambienti gestiti:
