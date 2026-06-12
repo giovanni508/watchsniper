@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Env / secrets
+.env
+
+# Database
+*.db
+*.sqlite3
+
+# Tooling
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+uv.lock

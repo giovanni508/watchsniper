@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WatchSniper — Dashboard Deal</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0f1419; color: #e6e6e6;
+      max-width: 1100px; margin: 0 auto; padding: 2rem;
+    }
+    h1 { color: #d4af37; }
+    .controls { display: flex; gap: .75rem; align-items: center; margin-bottom: 1.5rem; }
+    input[type="number"] {
+      background: #1c2128; color: #e6e6e6; border: 1px solid #3a3f47;
+      border-radius: 6px; padding: .5rem .75rem; width: 160px;
+    }
+    button {
+      background: #d4af37; color: #0f1419; border: none; border-radius: 6px;
+      padding: .5rem 1.25rem; font-weight: 600; cursor: pointer;
+    }
+    button:hover { filter: brightness(1.1); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .65rem .8rem; text-align: left; border-bottom: 1px solid #2a2f37; }
+    th { color: #d4af37; font-size: .85rem; text-transform: uppercase; }
+    tr:hover td { background: #1c2128; }
+    .margin-pos { color: #4ade80; font-weight: 600; }
+    .muted { color: #8b949e; }
+    a { color: #58a6ff; }
+  </style>
+</head>
+<body>
+  <h1>⌚ WatchSniper</h1>
+  <p class="muted">Annunci attivi con margine stimato superiore al 10%.</p>
+
+  <div class="controls">
+    <label for="max-price">Prezzo massimo (€):</label>
+    <input type="number" id="max-price" min="0" step="500" placeholder="es. 15000">
+    <button id="apply">Filtra</button>
+    <span id="status" class="muted"></span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Brand</th><th>Modello</th><th>Referenza</th><th>Condizione</th>
+        <th>Prezzo</th><th>Mercato</th><th>Margine</th><th>Link</th>
+      </tr>
+    </thead>
+    <tbody id="deals-body">
+      <tr><td colspan="8" class="muted">Caricamento…</td></tr>
+    </tbody>
+  </table>
+
+  <script>
+    const eur = (v) => v.toLocaleString("it-IT", { style: "currency", currency: "EUR", maximumFractionDigits: 0 });
+
+    async function loadDeals() {
+      const status = document.getElementById("status");
+      const body = document.getElementById("deals-body");
+      const maxPrice = document.getElementById("max-price").value;
+      const url = maxPrice ? `/api/deals?max_price=${encodeURIComponent(maxPrice)}` : "/api/deals";
+      status.textContent = "Aggiornamento…";
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const deals = await res.json();
+        status.textContent = `${deals.length} deal trovati`;
+        body.innerHTML = deals.length === 0
+          ? '<tr><td colspan="8" class="muted">Nessun deal al momento.</td></tr>'
+          : deals.map(d => `
+              <tr>
+                <td>${d.reference.brand}</td>
+                <td>${d.reference.model}</td>
+                <td><code>${d.reference.reference_number}</code></td>
+                <td>${d.listing.condition === "new" ? "Nuovo" : "Usato"}</td>
+                <td>${eur(d.listing.price)}</td>
+                <td>${eur(d.market_value)}</td>
+                <td class="margin-pos">${eur(d.margin)} (${d.margin_percentage.toFixed(1)}%)</td>
+                <td><a href="${d.listing.url}" target="_blank" rel="noopener">Apri</a></td>
+              </tr>`).join("");
+      } catch (err) {
+        status.textContent = "Errore di caricamento";
+        body.innerHTML = `<tr><td colspan="8" class="muted">Errore: ${err.message}</td></tr>`;
+      }
+    }
+
+    document.getElementById("apply").addEventListener("click", loadDeals);
+    loadDeals();
+    setInterval(loadDeals, 30000);
+  </script>
+</body>
+</html>
