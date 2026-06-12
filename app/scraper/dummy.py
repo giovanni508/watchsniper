@@ -11,9 +11,7 @@ import random
 
 from bs4 import BeautifulSoup, Tag
 
-from app.database import get_session
 from app.models import ConditionEnum
-from app.repositories import ListingRepository, ReferenceRepository
 from app.schemas import ScrapedListing
 from app.scraper.base import BaseScraper
 
@@ -117,24 +115,3 @@ class DummyWatchScraper(BaseScraper):
         except Exception:
             logger.exception("[%s] Scrape fallito", self.name)
             return []
-
-
-async def persist_scraped_listings(scraped: list[ScrapedListing]) -> int:
-    """Salva i risultati dello scrape nel DB tramite il repository pattern."""
-    saved = 0
-    async with get_session() as session:
-        references = ReferenceRepository(session)
-        listings = ListingRepository(session)
-        for item in scraped:
-            try:
-                reference = await references.get_or_create(
-                    brand=item.brand,
-                    model=item.model,
-                    reference_number=item.reference_number,
-                )
-                await listings.upsert_from_scrape(item, reference.id)
-                saved += 1
-            except Exception:
-                logger.exception("Persistenza fallita per %s", item.url)
-    logger.info("Persistiti %d/%d annunci", saved, len(scraped))
-    return saved

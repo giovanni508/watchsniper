@@ -1,21 +1,31 @@
-"""Scheduler periodico: scrape → persistenza → analisi → eventi."""
+"""Scheduler periodico: scrape → persistenza → analisi → eventi.
+
+Per aggiungere una nuova fonte è sufficiente implementare una sottoclasse di
+`BaseScraper` e registrarla in `SCRAPERS`: lo scheduler la eseguirà a ogni ciclo.
+"""
 
 import asyncio
 import logging
 
 from app.analyzer.engine import run_analysis
 from app.config import get_settings
-from app.scraper.dummy import DummyWatchScraper, persist_scraped_listings
+from app.scraper.base import BaseScraper
+from app.scraper.dummy import DummyWatchScraper
+from app.scraper.persistence import persist_scraped_listings
 
 logger = logging.getLogger(__name__)
 
+# Registro delle fonti attive.
+SCRAPERS: tuple[type[BaseScraper], ...] = (DummyWatchScraper,)
+
 
 async def scrape_cycle() -> None:
-    """Un singolo ciclo completo. Le eccezioni vengono loggate, mai propagate."""
-    scraper = DummyWatchScraper()
-    scraped = await scraper.run()
-    if scraped:
-        await persist_scraped_listings(scraped)
+    """Un singolo ciclo completo su tutte le fonti. Le eccezioni vengono loggate, mai propagate."""
+    for scraper_cls in SCRAPERS:
+        scraper = scraper_cls()
+        scraped = await scraper.run()  # non solleva: errori già loggati dallo scraper
+        if scraped:
+            await persist_scraped_listings(scraped)
     try:
         await run_analysis()
     except Exception:
@@ -25,7 +35,7 @@ async def scrape_cycle() -> None:
 async def scheduler_loop() -> None:
     """Esegue cicli di scrape+analisi a intervallo configurabile, per sempre."""
     interval = get_settings().scrape_interval_seconds
-    logger.info("Scheduler avviato (intervallo: %ds)", interval)
+    logger.info("Scheduler avviato (intervallo: %ds, fonti: %d)", interval, len(SCRAPERS))
     while True:
         try:
             await scrape_cycle()

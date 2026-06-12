@@ -13,14 +13,15 @@ from app.config import get_settings
 from app.database import get_session
 from app.events import DealFoundEvent, event_bus
 from app.models import Listing, User, WatchReference
-from app.repositories import ListingRepository, ReferenceRepository, UserRepository
+from app.repositories import (
+    ListingRepository,
+    ReferenceRepository,
+    SentAlertRepository,
+    UserRepository,
+)
 from app.schemas import DealFoundPayload
 
 logger = logging.getLogger(__name__)
-
-# Dedup in memoria delle notifiche già inviate: (user_id, listing_id).
-# Nota: si svuota al riavvio; per persistenza usare una tabella `sent_alerts`.
-_notified: set[tuple[int, int]] = set()
 
 
 class Margin(NamedTuple):
@@ -80,8 +81,10 @@ async def evaluate_listings() -> int:
     async with get_session() as session:
         listings = ListingRepository(session)
         users = UserRepository(session)
+        alerts = SentAlertRepository(session)
         active_listings = await listings.get_all_active()
         active_users = await users.get_active_with_filters()
+        already_notified = await alerts.get_all_pairs()
 
         for listing in active_listings:
             reference = listing.reference
@@ -97,7 +100,7 @@ async def evaluate_listings() -> int:
 
             for user in active_users:
                 key = (user.id, listing.id)
-                if key in _notified:
+                if key in already_notified:
                     continue
                 if not _matches_filters(user, listing, reference, margin):
                     continue
@@ -115,7 +118,8 @@ async def evaluate_listings() -> int:
                     has_box_papers=listing.has_box_papers,
                 )
                 await event_bus.publish(DealFoundEvent(payload=payload))
-                _notified.add(key)
+                await alerts.record(user.id, listing.id)
+                already_notified.add(key)
                 deals_found += 1
                 logger.info(
                     "DEAL: %s %s a %.0f€ (mercato %.0f€, margine %.1f%%) per chat %d",
