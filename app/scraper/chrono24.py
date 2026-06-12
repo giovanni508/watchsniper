@@ -61,6 +61,33 @@ _PAPERS_TOKENS = ("papers", "paper", "documenti", "documents", "warranty card")
 # Condizioni che indicano un orologio nuovo/mai indossato.
 _NEW_TOKENS = ("new", "unworn", "nuovo", "mai indossato")
 
+# Firme tipiche delle pagine di blocco/challenge (DataDome, Cloudflare, PerimeterX).
+_BLOCK_SIGNATURES = (
+    "datadome",
+    "captcha-delivery",
+    "cf-browser-verification",
+    "cf-challenge",
+    "just a moment",
+    "checking your browser",
+    "access denied",
+    "px-captcha",
+    "are you a robot",
+)
+
+# Selettori delle card di risultato, dal più specifico al più generico.
+_CARD_SELECTORS = (
+    "div.article-item-container",
+    "article.article-item",
+    "[data-article-id]",
+)
+# Selettori del prezzo all'interno di una card, in ordine di preferenza.
+_PRICE_SELECTORS = (
+    ".article-price",
+    "[data-price]",
+    "[class*=price]",
+    ".text-bold strong",
+)
+
 
 def parse_price(raw: str) -> float:
     """Converte una stringa prezzo in float, ignorando valuta e separatori.
@@ -125,10 +152,13 @@ class Chrono24Scraper(BaseScraper):
 
     # --- Targeting -------------------------------------------------------------
 
-    def build_search_url(self, brand: str, reference_number: str) -> str:
-        """URL della ricerca Chrono24 per una marca e referenza."""
+    def build_search_url(self, brand: str, reference_number: str, page: int = 1) -> str:
+        """URL della ricerca Chrono24 per una marca e referenza (con paginazione)."""
         query = quote_plus(f"{brand} {reference_number}".strip())
-        return f"{BASE_URL}/search/index.htm?query={query}&dosearch=true"
+        url = f"{BASE_URL}/search/index.htm?query={query}&dosearch=true"
+        if page > 1:
+            url += f"&showpage={page}"
+        return url
 
     async def _resolve_targets(self) -> list[tuple[str, str]]:
         if self._targets is not None:
@@ -141,32 +171,79 @@ class Chrono24Scraper(BaseScraper):
 
     async def scrape(self) -> list[ScrapedListing]:
         targets = await self._resolve_targets()
+        max_pages = max(1, self._settings.scraper_max_pages)
         results: list[ScrapedListing] = []
         for brand, reference_number in targets:
-            url = self.build_search_url(brand, reference_number)
-            logger.info("[%s] Ricerca %s %s", self.name, brand, reference_number)
+            results.extend(await self._scrape_reference(brand, reference_number, max_pages))
+            await self.rotate_identity()  # nuova identità tra una referenza e l'altra
+        return results
+
+    async def _scrape_reference(
+        self, brand: str, reference_number: str, max_pages: int
+    ) -> list[ScrapedListing]:
+        logger.info("[%s] Ricerca %s %s", self.name, brand, reference_number)
+        collected: list[ScrapedListing] = []
+        for page in range(1, max_pages + 1):
+            url = self.build_search_url(brand, reference_number, page)
             try:
                 html = await self.fetch_html(url, wait_until="domcontentloaded")
             except Exception:
                 logger.exception("[%s] Fetch fallito per %s", self.name, url)
-                continue
+                break
+            if self._is_blocked(html):
+                logger.warning(
+                    "[%s] Pagina di blocco/challenge rilevata su %s, interrompo questa referenza",
+                    self.name,
+                    url,
+                )
+                break
             page_listings = self._parse(html, brand=brand, reference_number=reference_number)
             logger.info(
-                "[%s] %s %s: %d annunci estratti",
+                "[%s] %s %s (pag. %d): %d annunci estratti",
                 self.name,
                 brand,
                 reference_number,
+                page,
                 len(page_listings),
             )
-            results.extend(page_listings)
-            await self.rotate_identity()  # nuova identità tra una referenza e l'altra
-        return results
+            collected.extend(page_listings)
+            if not page_listings or not self._has_next_page(html):
+                break
+            await self.random_delay()
+        return collected
+
+    # --- Rilevazione blocchi e paginazione -------------------------------------
+
+    def _is_blocked(self, html: str) -> bool:
+        """True se l'HTML sembra una pagina anti-bot anziché risultati di ricerca."""
+        lowered = html.lower()
+        return any(signature in lowered for signature in _BLOCK_SIGNATURES)
+
+    def _has_next_page(self, html: str) -> bool:
+        """True se esiste un controllo 'pagina successiva' attivo."""
+        soup = BeautifulSoup(html, "html.parser")
+        if soup.select_one('link[rel="next"], a[rel="next"]') is not None:
+            return True
+        next_node = soup.select_one(
+            "a.pagination-next, .pagination-next a, a[aria-label*='ext'], a[title*='ext']"
+        )
+        if next_node is None:
+            return False
+        classes = " ".join(next_node.get("class") or [])
+        return "disabled" not in classes and next_node.get("aria-disabled") != "true"
 
     # --- Parsing ---------------------------------------------------------------
 
+    def _select_cards(self, soup: BeautifulSoup) -> list[Tag]:
+        for selector in _CARD_SELECTORS:
+            cards = soup.select(selector)
+            if cards:
+                return cards
+        return []
+
     def _parse(self, html: str, *, brand: str, reference_number: str) -> list[ScrapedListing]:
         soup = BeautifulSoup(html, "html.parser")
-        cards = soup.select("div.article-item-container")
+        cards = self._select_cards(soup)
         listings: list[ScrapedListing] = []
         for card in cards:
             try:
@@ -188,10 +265,9 @@ class Chrono24Scraper(BaseScraper):
         href = str(anchor["href"])
         url = href if href.startswith("http") else f"{BASE_URL}{href}"
 
-        price_node = card.select_one(".article-price, .text-bold strong, [class*=price]")
-        if price_node is None:
+        price = self._extract_price(card)
+        if price is None:
             return None
-        price = parse_price(price_node.get_text(strip=True))
 
         condition_node = card.select_one(".article-condition, [class*=condition]")
         condition = (
@@ -216,3 +292,19 @@ class Chrono24Scraper(BaseScraper):
             condition=condition,
             has_box_papers=has_box and has_papers,
         )
+
+    def _extract_price(self, card: Tag) -> float | None:
+        """Cerca il prezzo provando i selettori in ordine, incluso l'attributo data-price."""
+        for selector in _PRICE_SELECTORS:
+            node = card.select_one(selector)
+            if node is None:
+                continue
+            if node.has_attr("data-price"):
+                raw = node.get("data-price")
+            else:
+                raw = node.get_text(strip=True)
+            try:
+                return parse_price(str(raw))
+            except ValueError:
+                continue  # questo nodo non conteneva un prezzo valido, provo il prossimo
+        return None
