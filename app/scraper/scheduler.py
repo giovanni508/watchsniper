@@ -1,7 +1,8 @@
 """Scheduler periodico: scrape → persistenza → analisi → eventi.
 
-Per aggiungere una nuova fonte è sufficiente implementare una sottoclasse di
-`BaseScraper` e registrarla in `SCRAPERS`: lo scheduler la eseguirà a ogni ciclo.
+Le fonti attive si scelgono via configurazione (`SCRAPER_SOURCES` in `.env`,
+es. "dummy", "chrono24" o "dummy,chrono24"). Per aggiungere una nuova fonte:
+implementa una sottoclasse di `BaseScraper` e registrala in `SCRAPER_REGISTRY`.
 """
 
 import asyncio
@@ -11,23 +12,40 @@ from app.analyzer.engine import run_analysis
 from app.config import get_settings
 from app.scraper.base import BaseScraper
 from app.scraper.chrono24 import Chrono24Scraper
-from app.scraper.dummy import DummyWatchScraper  # noqa: F401 — fonte demo, vedi SCRAPERS
+from app.scraper.dummy import DummyWatchScraper
 from app.scraper.persistence import persist_scraped_listings
 
 logger = logging.getLogger(__name__)
 
-# Registro delle fonti attive. Per aggiungere una fonte: sottoclasse di
-# BaseScraper + voce qui sotto.
-# DummyWatchScraper è temporaneamente disattivato per testare lo scraper reale.
-SCRAPERS: tuple[type[BaseScraper], ...] = (
-    Chrono24Scraper,
-    # DummyWatchScraper,
-)
+# Fonti disponibili, indicizzate per nome (quello usato in SCRAPER_SOURCES).
+SCRAPER_REGISTRY: dict[str, type[BaseScraper]] = {
+    "dummy": DummyWatchScraper,
+    "chrono24": Chrono24Scraper,
+}
+
+
+def get_active_scrapers() -> list[type[BaseScraper]]:
+    """Risolve le fonti configurate in classi scraper, con fallback sul dummy."""
+    active: list[type[BaseScraper]] = []
+    for name in get_settings().scraper_source_list:
+        scraper_cls = SCRAPER_REGISTRY.get(name)
+        if scraper_cls is None:
+            logger.warning(
+                "Fonte scraper sconosciuta: %r (disponibili: %s)",
+                name,
+                ", ".join(SCRAPER_REGISTRY),
+            )
+            continue
+        active.append(scraper_cls)
+    if not active:
+        logger.warning("Nessuna fonte valida configurata, uso il DummyWatchScraper")
+        active.append(DummyWatchScraper)
+    return active
 
 
 async def scrape_cycle() -> None:
     """Un singolo ciclo completo su tutte le fonti. Le eccezioni vengono loggate, mai propagate."""
-    for scraper_cls in SCRAPERS:
+    for scraper_cls in get_active_scrapers():
         scraper = scraper_cls()
         scraped = await scraper.run()  # non solleva: errori già loggati dallo scraper
         if scraped:
@@ -40,12 +58,17 @@ async def scrape_cycle() -> None:
 
 async def scheduler_loop() -> None:
     """Esegue cicli di scrape+analisi a intervallo configurabile, per sempre."""
-    interval = get_settings().scrape_interval_seconds
-    logger.info("Scheduler avviato (intervallo: %ds, fonti: %d)", interval, len(SCRAPERS))
+    settings = get_settings()
+    active = get_active_scrapers()
+    logger.info(
+        "Scheduler avviato (intervallo: %ds, fonti: %s)",
+        settings.scrape_interval_seconds,
+        ", ".join(s.name for s in active),
+    )
     while True:
         try:
             await scrape_cycle()
         except Exception:
             # Cintura e bretelle: il loop dello scheduler non deve mai morire.
             logger.exception("Ciclo di scrape fallito, riprovo al prossimo giro")
-        await asyncio.sleep(interval)
+        await asyncio.sleep(settings.scrape_interval_seconds)
